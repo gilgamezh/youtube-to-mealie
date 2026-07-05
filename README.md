@@ -179,14 +179,30 @@ Open `http://localhost:8000`, log in with `JUANITA_WEB_TOKEN` as the password.
 
 ### With plain Docker
 
+A public image is published to Docker Hub as
+[`gilgamezh/juanita-mealie`](https://hub.docker.com/r/gilgamezh/juanita-mealie)
+on every release (tagged `latest` and the release version):
+
 ```bash
-docker build -t juanita-web .
 docker run -p 8000:8000 \
   -e ANTHROPIC_API_KEY=sk-ant-... \
   -e MEALIE_URL=https://mealie.example.com \
   -e MEALIE_TOKEN=... \
   -e JUANITA_WEB_TOKEN=... \
-  juanita-web
+  gilgamezh/juanita-mealie
+```
+
+(Or build it yourself from a checkout: `docker build -t juanita-mealie .`)
+
+The same image also contains the `juanita` CLI — override the default command
+to run one-off imports without installing anything locally:
+
+```bash
+docker run --rm \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  -e MEALIE_URL=https://mealie.example.com \
+  -e MEALIE_TOKEN=... \
+  gilgamezh/juanita-mealie juanita https://youtu.be/VIDEO_ID
 ```
 
 ### Without Docker
@@ -226,7 +242,7 @@ spec:
     spec:
       containers:
         - name: juanita-web
-          image: juanita-web # build & push the Dockerfile above to your registry
+          image: gilgamezh/juanita-mealie:latest # pin a release tag in production
           ports: [{ containerPort: 8000 }]
           envFrom: [{ secretRef: { name: juanita-web } }]
 ---
