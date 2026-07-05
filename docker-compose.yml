@@ -1,14 +1,16 @@
+---
 services:
   juanita-web:
     build: .
     ports:
       - "8000:8000"
+    volumes:
+      # Same config file the CLI uses (create it with `juanita init` if it
+      # doesn't exist yet); load_config() finds it at this path automatically
+      # since the container's user is also named "juanita".
+      - ${HOME}/.config/juanita/config.env:/home/juanita/.config/juanita/config.env:ro
+      # - ./cookies.txt:/run/secrets/cookies.txt:ro
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      MEALIE_URL: ${MEALIE_URL}
-      MEALIE_TOKEN: ${MEALIE_TOKEN}
-      JUANITA_WEB_TOKEN: ${JUANITA_WEB_TOKEN}
       # YTDLP_COOKIES_FILE: /run/secrets/cookies.txt
-    # volumes:
-    #   - ./cookies.txt:/run/secrets/cookies.txt:ro
+      JUANITA_WEB_TOKEN: ${JUANITA_WEB_TOKEN:-juanita}
     restart: unless-stopped

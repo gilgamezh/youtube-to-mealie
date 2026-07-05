@@ -20,6 +20,7 @@ import dataclasses
 import logging
 import os
 import secrets
+import threading
 import time
 import uuid
 from collections import OrderedDict
@@ -33,6 +34,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -49,6 +51,7 @@ log = logging.getLogger("juanita.web")
 
 MAX_JOBS = 50
 MAX_WORKERS = 2
+MAX_LOG_LINES = 500
 
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 security = HTTPBasic()
@@ -64,6 +67,7 @@ class Job:
     mealie_link: str | None = None
     error: str | None = None
     created_at: float = dataclasses.field(default_factory=time.time)
+    logs: list[str] = dataclasses.field(default_factory=list)
 
     @property
     def preview(self) -> str:
@@ -104,6 +108,31 @@ class _JobStore:
 jobs = _JobStore()
 executor = ThreadPoolExecutor(max_workers=MAX_WORKERS)
 
+_job_local = threading.local()
+
+
+class _JobLogHandler(logging.Handler):
+    """Appends log records to whichever Job is running on the current thread.
+
+    Each worker thread in `executor` processes one job at a time, so
+    `_job_local.job` (set/cleared around `_run_job`) tells us which job's
+    `logs` list a record emitted during that job belongs to.
+    """
+
+    def emit(self, record: logging.LogRecord) -> None:
+        job = getattr(_job_local, "job", None)
+        if job is None:
+            return
+        job.logs.append(self.format(record))
+        if len(job.logs) > MAX_LOG_LINES:
+            del job.logs[: len(job.logs) - MAX_LOG_LINES]
+
+
+_log_handler = _JobLogHandler()
+_log_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-8s %(message)s"))
+logging.getLogger("juanita").addHandler(_log_handler)
+logging.getLogger("juanita").setLevel(logging.INFO)
+
 _client: anthropic.Anthropic | None = None
 _mealie: Mealie | None = None
 _cookies_file: str | None = None
@@ -142,13 +171,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="juanita", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 
 
 def _run_job(
     job: Job, client: anthropic.Anthropic, mealie: Mealie, cookies_file: str | None,
 ) -> None:
     job.status = "running"
+    _job_local.job = job
     try:
+        log.info("starting import (%s): %s", job.kind, job.preview)
         if job.kind == "text":
             source = text_to_source_record(job.source)
         else:
@@ -161,10 +193,13 @@ def _run_job(
             f"{mealie.base}/g/{group}/r/{slug}" if group else f"{mealie.base} (slug: {slug})"
         )
         job.status = "done"
+        log.info("imported -> %s", job.mealie_link)
     except Exception as e:  # noqa: BLE001 - surfaced to the UI, not raised
         job.error = str(e)
         job.status = "error"
         log.error("import failed for %s job %r: %s", job.kind, job.preview, e)
+    finally:
+        _job_local.job = None
 
 
 def _check_auth(credentials: HTTPBasicCredentials = Depends(security)) -> None:  # noqa: B008

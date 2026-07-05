@@ -179,9 +179,13 @@ the same access as Mealie itself.
 
 ### With Docker Compose
 
+`docker-compose.yml` mounts your existing per-user config
+(`~/.config/juanita/config.env`) into the container instead of duplicating it —
+create it first if you haven't already (see [Configure](#configure)):
+
 ```bash
-cp .env.example .env   # fill in ANTHROPIC_API_KEY, MEALIE_URL, MEALIE_TOKEN,
-                        # and JUANITA_WEB_TOKEN (a password of your choosing)
+juanita init   # fill in ANTHROPIC_API_KEY, MEALIE_URL, MEALIE_TOKEN,
+               # and JUANITA_WEB_TOKEN (a password of your choosing)
 docker compose up -d --build
 ```
 
