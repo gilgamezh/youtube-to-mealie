@@ -11,8 +11,8 @@
 #   bin/run_dev init
 #   bin/run_dev --help
 #
-# Add a new third-party dependency to pyproject.toml? Force a fresh venv so it
-# gets installed, e.g.: FADES_REBUILD=1 bin/run_dev ...
+# Added a new dependency to pyproject.toml? It's picked up automatically (see
+# _fades_common.sh); force it manually with FADES_REBUILD=1 bin/run_dev ...
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -23,10 +23,7 @@ if ! command -v fades >/dev/null 2>&1; then
     exit 1
 fi
 
-pip_options="-e ."
-if [[ "${FADES_REBUILD:-}" == "1" ]]; then
-    # --force-reinstall makes pip rebuild the editable install in the venv.
-    pip_options="-e . --force-reinstall"
-fi
+source "$repo_root/bin/_fades_common.sh"
+_fades_ensure_fresh_venv dev -d requests
 
-exec fades -d requests --pip-options="$pip_options" -x juanita -- "$@"
+exec fades -d requests --pip-options="-e ." -x juanita -- "$@"

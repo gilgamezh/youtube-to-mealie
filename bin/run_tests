@@ -12,8 +12,8 @@
 #   bin/run_tests tests/test_push.py   # a single file
 #   bin/run_tests -k linking -x        # filter + stop on first failure
 #
-# Added a new dependency to pyproject.toml? Force a fresh venv so it gets
-# installed: FADES_REBUILD=1 bin/run_tests
+# Added a new dependency to pyproject.toml? It's picked up automatically (see
+# _fades_common.sh); force it manually with FADES_REBUILD=1 bin/run_tests
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -24,9 +24,7 @@ if ! command -v fades >/dev/null 2>&1; then
     exit 1
 fi
 
-pip_options="-e .[dev]"
-if [[ "${FADES_REBUILD:-}" == "1" ]]; then
-    pip_options="-e .[dev] --force-reinstall"
-fi
+source "$repo_root/bin/_fades_common.sh"
+_fades_ensure_fresh_venv tests -d pytest
 
-exec fades -d pytest --pip-options="$pip_options" -x pytest -v -- "$@"
+exec fades -d pytest --pip-options="-e .[dev]" -x pytest -v -- "$@"

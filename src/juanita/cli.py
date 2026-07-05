@@ -213,7 +213,7 @@ def fetch_video(url: str, *, cookies_from_browser: str | None = None,
         opts["cookiesfrombrowser"] = (cookies_from_browser,)
     if cookies_file:
         opts["cookiefile"] = cookies_file
-    log.debug("yt-dlp: extracting metadata for %s", url)
+    log.info("fetching video metadata for %s", url)
     with YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=False)
         # yt-dlp falls back to its "generic" extractor for any URL no site-
@@ -226,8 +226,10 @@ def fetch_video(url: str, *, cookies_from_browser: str | None = None,
             raise DownloadError(f"{url}: no dedicated video extractor (generic page)")
         # Fetch captions inside the ydl session so the request carries yt-dlp's
         # headers/cookies — a bare urllib fetch gets 429'd by YouTube fast.
+        log.info("downloading captions...")
         transcript = _extract_transcript(ydl, info)
 
+    log.info("fetched %r (%d transcript chars)", info.get("title", ""), len(transcript))
     return {
         "title": info.get("title", ""),
         "description": info.get("description", "") or "",
@@ -251,7 +253,7 @@ def fetch_source(url: str, *, cookies_from_browser: str | None = None,
         return fetch_video(url, cookies_from_browser=cookies_from_browser,
                            cookies_file=cookies_file)
     except DownloadError:
-        log.debug("yt-dlp doesn't recognize %s as a video; trying it as a webpage", url)
+        log.info("%s isn't a recognized video; trying it as a webpage instead", url)
         return fetch_webpage(url)
 
 
@@ -267,6 +269,7 @@ def text_to_source_record(text: str, *, default_title: str = "") -> dict:
     """
     text = text.strip()
     title = next((ln.strip() for ln in text.splitlines() if ln.strip()), default_title)
+    log.info("using recipe text (%d chars)", len(text))
     return {
         "title": title,
         "description": "",
@@ -336,6 +339,7 @@ def fetch_webpage(url: str) -> dict:
     Claude to extract a recipe from, and `og:image`/`twitter:image` (when
     present) becomes the thumbnail.
     """
+    log.info("fetching webpage %s", url)
     r = requests.get(url, headers=_BROWSER_HEADERS, timeout=30)
     r.raise_for_status()
     parser = _PageParser()
@@ -343,12 +347,14 @@ def fetch_webpage(url: str) -> dict:
     title = parser.meta.get("og:title") or parser.title.strip() or url
     description = parser.meta.get("og:description") or parser.meta.get("description") or ""
     thumbnail = parser.meta.get("og:image") or parser.meta.get("twitter:image")
+    body = parser.text()
+    log.info("fetched %r (%d chars)", title.strip(), len(body))
     return {
         "title": title.strip(),
         "description": description.strip(),
         "source_url": url,
         "thumbnail": thumbnail,
-        "body": parser.text(),
+        "body": body,
     }
  
 
@@ -481,7 +487,10 @@ def extract_recipe(client: anthropic.Anthropic, source: dict) -> Recipe:
     if resp.parsed_output is None:
         raise RuntimeError(
             f"Claude did not return a parseable recipe (stop_reason={resp.stop_reason})")
-    return resp.parsed_output
+    recipe = resp.parsed_output
+    log.info("extracted %r (%d ingredients, %d steps)",
+             recipe.name, len(recipe.ingredients), len(recipe.instructions))
+    return recipe
 
 
 # ---- 3. Mealie --------------------------------------------------------------
@@ -708,8 +717,9 @@ def _download_image(url: str) -> tuple[bytes, str]:
 
 def push_to_mealie(mealie: Mealie, recipe: Recipe, source: dict, *,
                    include_tags: bool = True, link_ingredients: bool = True) -> str:
+    log.info("creating recipe in Mealie...")
     slug = mealie.create(recipe.name)
-    log.debug("mealie: created recipe slug %s", slug)
+    log.info("created recipe (slug: %s)", slug)
     doc = mealie.get(slug)
 
     source_url = source.get("source_url")
@@ -724,24 +734,26 @@ def push_to_mealie(mealie: Mealie, recipe: Recipe, source: dict, *,
     doc["recipeYield"] = recipe.recipe_yield
     if source_url:
         doc["orgURL"] = source_url
+    log.info("%s %d ingredient(s)...",
+             "linking" if link_ingredients else "adding (unlinked)", len(recipe.ingredients))
     doc["recipeIngredient"] = [
         _build_recipe_ingredient(mealie, i, link=link_ingredients) for i in recipe.ingredients
     ]
-    log.debug("mealie: %s %d ingredients",
-              "linked" if link_ingredients else "added (unlinked)", len(recipe.ingredients))
     doc["recipeInstructions"] = [{"text": s} for s in recipe.instructions]
     if include_tags and recipe.tags:
         doc["tags"] = [mealie.resolve_tag(t) for t in recipe.tags]
-        log.debug("mealie: attached tags %s", [t["name"] for t in doc["tags"]])
+        log.info("attached tags: %s", ", ".join(t["name"] for t in doc["tags"]))
 
+    log.info("saving recipe...")
     mealie.update(slug, doc)
+    log.info("recipe saved")
 
     if source.get("thumbnail"):
+        log.info("downloading and setting recipe image...")
         try:
             content, ext = _download_image(source["thumbnail"])
             mealie.set_image(slug, content, ext)
-            log.debug("mealie: set image (.%s, %d bytes) from %s",
-                      ext, len(content), source["thumbnail"])
+            log.info("image set (.%s, %d bytes)", ext, len(content))
         except Exception as e:  # noqa: BLE001 - image is best-effort
             log.warning("could not set image for %s: %s", slug, e)
 
